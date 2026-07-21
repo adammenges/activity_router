@@ -2,3 +2,4 @@
 - Make the UI reactive to window size by adapting layout/components at any width
 - Make every visible empty area of the custom toolbar/titlebar draggable, and verify native window dragging in the packaged app.
 - Do not rely on WebView geolocation for macOS permission behavior; use Core Location and verify that RIDGELINE triggers the system approval prompt.
+- Do not consider a drag test successful merely because the automation reports UI state changed; verify the window frame actually moves, and use an explicit native `startDragging` call when declarative drag regions are unreliable.

@@ -12,6 +12,8 @@ const ROUTING_PROFILES = Object.freeze({
 });
 
 const invoke = window.__TAURI__?.core?.invoke;
+const appWindow = window.__TAURI__?.window?.getCurrentWindow?.();
+const WINDOW_DRAG_INTERACTIVE_SELECTOR = "a, button, input, select, textarea, label, summary, [contenteditable]:not([contenteditable='false']), [role='button'], [role='link']";
 
 const state = {
     name: "Untitled Route",
@@ -52,6 +54,20 @@ const elements = {
     shortcutsDialog: document.getElementById("shortcuts-dialog"),
     btnCloseShortcuts: document.getElementById("btn-close-shortcuts"),
 };
+
+function beginWindowDrag(event) {
+    if (!appWindow || event.button !== 0 || event.detail !== 1) return;
+    if (!(event.target instanceof Element)) return;
+    if (!event.target.closest("[data-window-drag]")) return;
+    if (event.target.closest(WINDOW_DRAG_INTERACTIVE_SELECTOR)) return;
+
+    event.preventDefault();
+    void appWindow.startDragging().catch((error) => {
+        setStatus(`window drag failed · ${String(error?.message || error)}`, "error");
+    });
+}
+
+document.addEventListener("mousedown", beginWindowDrag);
 
 if (!window.L) {
     throw new Error("RIDGELINE could not load its bundled map engine.");
