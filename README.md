@@ -36,7 +36,7 @@ The repository pins Rust 1.95.0 and Tauri CLI 2.11.4. The setup script installs 
 ./scripts/dev.sh
 ```
 
-The Tauri dev server watches both `ui/` and the Rust crate. For a browser preview, serve `ui/` from localhost so the browser can use the secure-context Geolocation API; in that mode GPX export uses the browser download flow.
+The Tauri dev server watches both `ui/` and the Rust crate. The macOS app uses native Core Location so the system permission prompt is tied to RIDGELINE. For a browser preview, serve `ui/` from localhost so the browser can use the secure-context Geolocation API; in that mode GPX export uses the browser download flow.
 
 ## Check and package
 
@@ -88,7 +88,7 @@ Browser-preview GPX files are built with the same structure in JavaScript so the
 
 - Base-map tiles come from OpenStreetMap and remain subject to the [OpenStreetMap tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
 - Trail routing comes from the public [BRouter](https://brouter.de/brouter-web/) service using OpenStreetMap data, the `hiking-mountain` profile for trail running, and the `mtb` profile for mountain biking. No API key is required, and the public service has no uptime guarantee.
-- Location access is requested only after you choose **Locate Me** or press <kbd>⌘L</kbd>. macOS controls the permission, and RIDGELINE does not continuously track you.
+- Location access is requested through native macOS Core Location only after you choose **Locate Me** or press <kbd>⌘L</kbd>. macOS controls the approval prompt, and RIDGELINE requests a one-time fix rather than continuously tracking you.
 - Your draft is stored locally. When a route has two or more checkpoints, their coordinates are sent to BRouter to calculate the route; map tile requests go to OpenStreetMap.
 
 ## License

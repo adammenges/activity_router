@@ -802,31 +802,36 @@ function applyUserLocation(position) {
     }
 }
 
-function locateUser() {
-    if (!navigator.geolocation) {
+function browserLocation() {
+    return new Promise((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 15_000,
+            maximumAge: 30_000,
+        });
+    });
+}
+
+async function locateUser() {
+    if (!invoke && !navigator.geolocation) {
         setStatus("location is not available on this device", "error");
         return;
     }
     elements.btnLocate.disabled = true;
     elements.btnLocate.textContent = "LOCATING…";
-    setStatus("requesting your current location · RIDGELINE only asks when you choose locate", "busy");
-    navigator.geolocation.getCurrentPosition(
-        (position) => {
-            elements.btnLocate.disabled = false;
-            try {
-                applyUserLocation(position);
-            } catch (error) {
-                elements.btnLocate.textContent = "LOCATE ME";
-                setStatus(`location failed · ${String(error?.message || error)}`, "error");
-            }
-        },
-        (error) => {
-            elements.btnLocate.disabled = false;
-            elements.btnLocate.textContent = "LOCATE ME";
-            setStatus(locationErrorMessage(error), "error");
-        },
-        { enableHighAccuracy: true, timeout: 15_000, maximumAge: 30_000 },
-    );
+    setStatus("requesting your current location · macOS may ask you to approve RIDGELINE", "busy");
+
+    try {
+        const position = invoke
+            ? { coords: await invoke("current_location") }
+            : await browserLocation();
+        applyUserLocation(position);
+    } catch (error) {
+        elements.btnLocate.textContent = "LOCATE ME";
+        setStatus(locationErrorMessage(error), "error");
+    } finally {
+        elements.btnLocate.disabled = false;
+    }
 }
 
 function xmlEscape(value) {

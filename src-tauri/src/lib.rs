@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::DialogExt;
 
 const MAX_ROUTE_NAME_CHARS: usize = 72;
@@ -13,6 +13,172 @@ struct RoutePoint {
     lat: f64,
     lon: f64,
     elevation: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeLocation {
+    latitude: f64,
+    longitude: f64,
+    accuracy: f64,
+    altitude: Option<f64>,
+}
+
+#[cfg(target_os = "macos")]
+mod native_location {
+    use std::cell::RefCell;
+
+    use corelocation::location_manager::LOCATION_ACCURACY_BEST;
+    use corelocation::{
+        ActivityType, AuthorizationStatus, Location, LocationManager, LocationManagerCallbacks,
+    };
+
+    use super::NativeLocation;
+
+    type LocationResult = Result<NativeLocation, String>;
+
+    enum LocationEvent {
+        Authorization(AuthorizationStatus),
+        Locations(Vec<Location>),
+        Error(String),
+    }
+
+    thread_local! {
+        static LOCATION_MANAGER: RefCell<Option<LocationManager>> = const { RefCell::new(None) };
+    }
+
+    fn request_fix() {
+        LOCATION_MANAGER.with(|slot| {
+            if let Some(manager) = slot.borrow().as_ref() {
+                manager.request_location();
+            }
+        });
+    }
+
+    fn start_request(sender: &tauri::async_runtime::Sender<LocationEvent>) {
+        if !LocationManager::location_services_enabled() {
+            let _ = sender.try_send(LocationEvent::Error(
+                "Location Services are disabled in macOS System Settings.".to_owned(),
+            ));
+            return;
+        }
+
+        let location_sender = sender.clone();
+        let error_sender = sender.clone();
+        let authorization_sender = sender.clone();
+        let callbacks = LocationManagerCallbacks::new()
+            .on_locations(move |locations| {
+                let _ = location_sender.try_send(LocationEvent::Locations(locations));
+            })
+            .on_error(move |error| {
+                let _ = error_sender.try_send(LocationEvent::Error(format!(
+                    "Core Location failed: {}",
+                    error.message
+                )));
+            })
+            .on_authorization_change(move |status| {
+                let _ = authorization_sender.try_send(LocationEvent::Authorization(status));
+            });
+
+        let manager = match LocationManager::with_callbacks(callbacks) {
+            Ok(manager) => manager,
+            Err(error) => {
+                let _ = sender.try_send(LocationEvent::Error(format!(
+                    "Could not start Core Location: {error}"
+                )));
+                return;
+            }
+        };
+        manager.set_desired_accuracy(LOCATION_ACCURACY_BEST);
+        manager.set_activity_type(ActivityType::Fitness);
+        let status = manager.authorization_status();
+
+        LOCATION_MANAGER.with(|slot| slot.replace(Some(manager)));
+        match status {
+            AuthorizationStatus::NotDetermined => LOCATION_MANAGER.with(|slot| {
+                if let Some(manager) = slot.borrow().as_ref() {
+                    manager.request_when_in_use_authorization();
+                }
+            }),
+            determined_status => {
+                let _ = sender.try_send(LocationEvent::Authorization(determined_status));
+            }
+        }
+    }
+
+    fn native_location(location: &Location) -> LocationResult {
+        let coordinate = location.coordinate;
+        let accuracy = location.horizontal_accuracy;
+        if !coordinate.is_valid() || !accuracy.is_finite() || accuracy < 0.0 {
+            return Err("Core Location returned invalid coordinates.".to_owned());
+        }
+
+        Ok(NativeLocation {
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            accuracy,
+            altitude: location.altitude.is_finite().then_some(location.altitude),
+        })
+    }
+
+    pub async fn current(app: tauri::AppHandle) -> LocationResult {
+        let (sender, mut receiver) = tauri::async_runtime::channel(4);
+        let mut fix_requested = false;
+        app.run_on_main_thread(move || {
+            start_request(&sender);
+        })
+        .map_err(|error| format!("Could not start Core Location: {error}"))?;
+
+        while let Some(event) = receiver.recv().await {
+            match event {
+                LocationEvent::Authorization(AuthorizationStatus::NotDetermined) => {}
+                LocationEvent::Authorization(
+                    AuthorizationStatus::AuthorizedAlways
+                    | AuthorizationStatus::AuthorizedWhenInUse,
+                ) => {
+                    if !fix_requested {
+                        fix_requested = true;
+                        app.run_on_main_thread(request_fix).map_err(|error| {
+                            format!("Could not request a location fix: {error}")
+                        })?;
+                    }
+                }
+                LocationEvent::Authorization(AuthorizationStatus::Denied) => {
+                    return Err(
+                        "Location permission was denied. Enable RIDGELINE in System Settings › Privacy & Security › Location Services."
+                            .to_owned(),
+                    );
+                }
+                LocationEvent::Authorization(AuthorizationStatus::Restricted) => {
+                    return Err("Location access is restricted by macOS policy.".to_owned());
+                }
+                LocationEvent::Locations(locations) => {
+                    let location = locations
+                        .into_iter()
+                        .next_back()
+                        .ok_or_else(|| "Core Location returned no coordinates.".to_owned())?;
+                    return native_location(&location);
+                }
+                LocationEvent::Error(error) => return Err(error),
+            }
+        }
+
+        Err("Core Location stopped before returning a result.".to_owned())
+    }
+}
+
+#[tauri::command]
+async fn current_location(app: tauri::AppHandle) -> Result<NativeLocation, String> {
+    #[cfg(target_os = "macos")]
+    {
+        native_location::current(app).await
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("Native location is currently available only on macOS.".to_owned())
+    }
 }
 
 #[tauri::command]
@@ -171,7 +337,7 @@ fn xml_escape(value: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![export_gpx])
+        .invoke_handler(tauri::generate_handler![export_gpx, current_location])
         .run(tauri::generate_context!())
         .expect("error while running the RIDGELINE application");
 }

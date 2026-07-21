@@ -12,6 +12,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 tauri = { version = "2.11.5", default-features = false, features = ["compression", "wry"] }
 tauri-plugin-dialog = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+corelocation-rs = "0.3.7"
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 
