@@ -26,7 +26,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self'",
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://brouter.de; img-src 'self' asset: http://asset.localhost https://tile.openstreetmap.org data: blob:; style-src 'self' 'unsafe-inline'",
       "freezePrototype": true
     }
   },
@@ -41,7 +41,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "13.0"
+      "minimumSystemVersion": "13.0",
+      "infoPlist": "Info.plist"
     }
   }
 }

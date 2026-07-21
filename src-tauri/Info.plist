@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSLocationUsageDescription</key>
+    <string>RIDGELINE uses your location when you choose Locate Me so you can start a trail route nearby.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>RIDGELINE uses your location when you choose Locate Me so you can start a trail route nearby.</string>
+</dict>
+</plist>

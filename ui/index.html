@@ -6,6 +6,7 @@
     <meta name="color-scheme" content="dark">
     <meta name="theme-color" content="#0b1012">
     <title>RIDGELINE — Route Builder</title>
+    <link rel="stylesheet" href="vendor/leaflet/dist/leaflet.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,6 +24,7 @@
             </div>
             <nav class="toolbar-actions" aria-label="Route actions">
                 <button class="text-button" id="btn-shortcuts" type="button">SHORTCUTS</button>
+                <button class="text-button" id="btn-locate" type="button">LOCATE ME</button>
                 <button class="text-button" id="btn-reverse" type="button">REVERSE</button>
                 <button class="text-button" id="btn-add" type="button">+ ADD SEGMENT</button>
                 <button class="primary-button" id="btn-export" type="button">EXPORT GPX</button>
@@ -58,16 +60,15 @@
 
             <section class="map-panel" id="route-map" aria-labelledby="map-title">
                 <h1 id="map-title" class="visually-hidden">Interactive route map</h1>
-                <img class="map-texture" src="assets/tiger-mountain-topography.png" alt="Dark topographic terrain map of mountain ridges and trails">
-                <canvas id="route-canvas" tabindex="0" aria-label="Route map. Click to add a checkpoint, or use the add segment button."></canvas>
-
-                <div class="terrain-label terrain-label-primary" aria-hidden="true">TIGER MOUNTAIN<br>STATE FOREST</div>
-                <div class="terrain-label terrain-label-summit" aria-hidden="true">WEST TIGER SUMMIT<br>2,953 FT</div>
-                <div class="terrain-label terrain-label-trail" aria-hidden="true">PRESTON RAILROAD TRAIL</div>
+                <div id="live-map" tabindex="0" aria-label="Live OpenStreetMap trail map. Click to add a checkpoint."></div>
+                <div class="map-data-badge" aria-label="Live map and route data sources">
+                    <span class="live-dot" aria-hidden="true"></span>
+                    <span id="map-source">LIVE OSM · BROUTER</span>
+                </div>
 
                 <div class="map-hint" id="map-hint">
                     <strong id="map-mode">ROUTE READY</strong>
-                    <span>click map to add checkpoints · ⌘Z undo</span>
+                    <span>click map to add checkpoints · ⌘L locate · ⌘Z undo</span>
                 </div>
                 <div id="map-coordinate" class="map-coordinate" aria-hidden="true"></div>
             </section>
@@ -107,6 +108,8 @@
             <div><dt><kbd>⌘E</kbd></dt><dd>Export GPX</dd></div>
             <div><dt><kbd>⌘N</kbd></dt><dd>Start a new route</dd></div>
             <div><dt><kbd>⌘R</kbd></dt><dd>Reverse route</dd></div>
+            <div><dt><kbd>⌘L</kbd></dt><dd>Locate me / start nearby</dd></div>
+            <div><dt><kbd>⌘P</kbd></dt><dd>Add checkpoint at map center</dd></div>
             <div><dt><kbd>⌘Z</kbd></dt><dd>Undo checkpoint</dd></div>
             <div><dt><kbd>⌘⇧Z</kbd></dt><dd>Redo checkpoint</dd></div>
             <div><dt><kbd>⌘1</kbd></dt><dd>Trail run mode</dd></div>
@@ -115,6 +118,7 @@
         </dl>
     </dialog>
 
+    <script src="vendor/leaflet/dist/leaflet.js"></script>
     <script src="main.js" defer></script>
 </body>
 </html>
