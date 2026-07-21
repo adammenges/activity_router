@@ -1,110 +1,166 @@
-use serde::Serialize;
+use std::fmt::Write as _;
 
-const MAX_APP_NAME_CHARS: usize = 64;
+use serde::Deserialize;
+use tauri_plugin_dialog::DialogExt;
 
-#[derive(Debug, Serialize)]
+const MAX_ROUTE_NAME_CHARS: usize = 72;
+const MAX_TRACK_POINTS: usize = 20_000;
+const MAX_FILE_NAME_CHARS: usize = 96;
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CommandPreview {
-    command: String,
-    summary: &'static str,
+struct RoutePoint {
+    lat: f64,
+    lon: f64,
+    elevation: f64,
 }
 
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)] // Tauri deserializes command arguments into owned values.
-fn get_build_command(app_name: String, bundle_id: String) -> Result<CommandPreview, String> {
-    let app_name = validate_app_name(&app_name)?;
-    let bundle_id = validate_bundle_id(&bundle_id)?;
+async fn export_gpx(
+    app: tauri::AppHandle,
+    route_name: String,
+    activity: String,
+    file_name: String,
+    points: Vec<RoutePoint>,
+) -> Result<Option<String>, String> {
+    validate_file_name(&file_name)?;
+    let document = build_gpx_document(&route_name, &activity, &points)?;
+    let selected_path = app
+        .dialog()
+        .file()
+        .set_title("Export GPX Route")
+        .set_file_name(&file_name)
+        .add_filter("GPS Exchange Format", &["gpx"])
+        .blocking_save_file();
 
-    Ok(CommandPreview {
-        command: format!(
-            "$ APP_NAME={} APP_BUNDLE_ID={} ./scripts/build_macos_app.sh",
-            shell_quote(app_name),
-            shell_quote(bundle_id)
-        ),
-        summary: "Build command ready. Copy it into a terminal from the repository root.",
-    })
+    let Some(selected_path) = selected_path else {
+        return Ok(None);
+    };
+
+    let mut path = selected_path
+        .into_path()
+        .map_err(|error| format!("Could not resolve the export location: {error}"))?;
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("gpx"))
+    {
+        path.set_extension("gpx");
+    }
+
+    std::fs::write(&path, document)
+        .map_err(|error| format!("Could not save the GPX file: {error}"))?;
+
+    Ok(Some(path.display().to_string()))
 }
 
-#[tauri::command]
-fn get_check_command() -> CommandPreview {
-    CommandPreview {
-        command: "$ ./scripts/check.sh".to_owned(),
-        summary: "Check command ready. It formats, lints, and tests the workspace.",
+fn validate_file_name(file_name: &str) -> Result<(), String> {
+    let character_count = file_name.chars().count();
+    let valid_characters = file_name
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character));
+
+    let has_gpx_extension = std::path::Path::new(file_name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("gpx"));
+
+    if character_count == 0
+        || character_count > MAX_FILE_NAME_CHARS
+        || !valid_characters
+        || !has_gpx_extension
+    {
+        return Err("The GPX file name is not valid.".to_owned());
     }
+
+    Ok(())
 }
 
-fn validate_app_name(value: &str) -> Result<&str, String> {
-    let value = value.trim();
-    let length = value.chars().count();
+fn validate_route<'a>(
+    route_name: &'a str,
+    activity: &str,
+    points: &[RoutePoint],
+) -> Result<(&'a str, &'static str), String> {
+    let route_name = route_name.trim();
+    let route_name_length = route_name.chars().count();
 
-    if length == 0 {
-        return Err("App name cannot be empty.".to_owned());
-    }
-    if length > MAX_APP_NAME_CHARS {
+    if route_name_length == 0 || route_name_length > MAX_ROUTE_NAME_CHARS {
         return Err(format!(
-            "App name must be {MAX_APP_NAME_CHARS} characters or fewer."
+            "Route name must be between 1 and {MAX_ROUTE_NAME_CHARS} characters."
+        ));
+    }
+    if points.len() < 2 {
+        return Err("A route needs at least two track points before export.".to_owned());
+    }
+    if points.len() > MAX_TRACK_POINTS {
+        return Err(format!(
+            "A route may contain at most {MAX_TRACK_POINTS} track points."
         ));
     }
 
-    let starts_with_alphanumeric = value
-        .chars()
-        .next()
-        .is_some_and(|character| character.is_ascii_alphanumeric());
-    let ends_with_alphanumeric = value
-        .chars()
-        .next_back()
-        .is_some_and(|character| character.is_ascii_alphanumeric());
-    let contains_only_allowed_characters = value
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || " ._-".contains(character));
-
-    if !starts_with_alphanumeric || !ends_with_alphanumeric || !contains_only_allowed_characters {
-        return Err(
-            "App name must start and end with a letter or number and may contain spaces, dots, hyphens, and underscores."
-                .to_owned(),
-        );
+    for point in points {
+        if !point.lat.is_finite()
+            || !point.lon.is_finite()
+            || !point.elevation.is_finite()
+            || !(-90.0..=90.0).contains(&point.lat)
+            || !(-180.0..=180.0).contains(&point.lon)
+            || !(-500.0..=30_000.0).contains(&point.elevation)
+        {
+            return Err("The route contains an invalid track point.".to_owned());
+        }
     }
 
-    Ok(value)
+    let activity_name = match activity {
+        "trail-run" => "Trail Running",
+        "mtb" => "Mountain Biking",
+        _ => return Err("Activity must be trail running or mountain biking.".to_owned()),
+    };
+
+    Ok((route_name, activity_name))
 }
 
-fn validate_bundle_id(value: &str) -> Result<&str, String> {
-    let value = value.trim();
-    let components: Vec<_> = value.split('.').collect();
+fn build_gpx_document(
+    route_name: &str,
+    activity: &str,
+    points: &[RoutePoint],
+) -> Result<String, String> {
+    let (route_name, activity_name) = validate_route(route_name, activity, points)?;
+    let escaped_name = xml_escape(route_name);
+    let mut document = String::with_capacity(points.len() * 72 + 640);
 
-    if value.len() > 255 || components.len() < 2 {
-        return Err(
-            "Bundle ID must be a reverse-DNS identifier such as com.example.my-app.".to_owned(),
-        );
+    document.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    document.push_str(
+        "<gpx version=\"1.1\" creator=\"RIDGELINE\" xmlns=\"http://www.topografix.com/GPX/1/1\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd\">\n",
+    );
+    writeln!(
+        document,
+        "  <metadata><name>{escaped_name}</name><desc>{activity_name} route exported by RIDGELINE</desc></metadata>"
+    )
+    .expect("writing to a String cannot fail");
+    writeln!(
+        document,
+        "  <trk><name>{escaped_name}</name><type>{activity_name}</type><trkseg>"
+    )
+    .expect("writing to a String cannot fail");
+
+    for point in points {
+        writeln!(
+            document,
+            "    <trkpt lat=\"{:.7}\" lon=\"{:.7}\"><ele>{:.1}</ele></trkpt>",
+            point.lat, point.lon, point.elevation
+        )
+        .expect("writing to a String cannot fail");
     }
 
-    let valid = components.iter().all(|component| {
-        !component.is_empty()
-            && component
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            && component
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphanumeric)
-            && component
-                .as_bytes()
-                .last()
-                .is_some_and(u8::is_ascii_alphanumeric)
-    });
-
-    if !valid {
-        return Err(
-            "Bundle ID components must start and end with a letter or number and may contain hyphens."
-                .to_owned(),
-        );
-    }
-
-    Ok(value)
+    document.push_str("  </trkseg></trk>\n</gpx>\n");
+    Ok(document)
 }
 
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 /// Starts the Tauri application and blocks until its event loop exits.
@@ -114,54 +170,62 @@ fn shell_quote(value: &str) -> String {
 /// Panics if Tauri cannot initialize or its event loop exits with an error.
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![
-            get_build_command,
-            get_check_command
-        ])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![export_gpx])
         .run(tauri::generate_context!())
-        .expect("error while running Tauri application");
+        .expect("error while running the RIDGELINE application");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn accepts_human_readable_app_names() {
-        assert_eq!(validate_app_name("  My Cool-App_2  "), Ok("My Cool-App_2"));
+    fn sample_points() -> Vec<RoutePoint> {
+        vec![
+            RoutePoint {
+                lat: 47.5098,
+                lon: -121.8975,
+                elevation: 1_760.0,
+            },
+            RoutePoint {
+                lat: 47.5439,
+                lon: -121.9859,
+                elevation: 2_953.0,
+            },
+        ]
     }
 
     #[test]
-    fn rejects_unsafe_app_names() {
-        assert!(validate_app_name("My \"App\"").is_err());
-        assert!(validate_app_name("-My App").is_err());
-        assert!(validate_app_name("").is_err());
+    fn builds_valid_gpx_track() {
+        let document = build_gpx_document("Tiger Mountain Traverse", "trail-run", &sample_points())
+            .expect("valid route should produce GPX");
+
+        assert!(document.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert!(document.contains("<name>Tiger Mountain Traverse</name>"));
+        assert!(document.contains("<type>Trail Running</type>"));
+        assert_eq!(document.matches("<trkpt ").count(), 2);
     }
 
     #[test]
-    fn validates_reverse_dns_bundle_ids() {
-        assert_eq!(
-            validate_bundle_id("com.example.my-app"),
-            Ok("com.example.my-app")
-        );
-        assert!(validate_bundle_id("my-app").is_err());
-        assert!(validate_bundle_id("com.example.-app").is_err());
-        assert!(validate_bundle_id("com.example.my_app").is_err());
+    fn escapes_route_names_for_xml() {
+        let document = build_gpx_document("Ridge & Creek <Loop>", "mtb", &sample_points())
+            .expect("valid route should produce GPX");
+
+        assert!(document.contains("Ridge &amp; Creek &lt;Loop&gt;"));
+        assert!(document.contains("<type>Mountain Biking</type>"));
     }
 
     #[test]
-    fn quotes_shell_values_defensively() {
-        assert_eq!(shell_quote("Adam's App"), "'Adam'\"'\"'s App'");
+    fn rejects_invalid_routes() {
+        assert!(build_gpx_document("", "trail-run", &sample_points()).is_err());
+        assert!(build_gpx_document("Route", "road-bike", &sample_points()).is_err());
+        assert!(build_gpx_document("Route", "mtb", &sample_points()[..1]).is_err());
     }
 
     #[test]
-    fn build_preview_contains_validated_values() {
-        let preview = get_build_command("My App".to_owned(), "com.example.my-app".to_owned())
-            .expect("valid values should produce a command");
-
-        assert_eq!(
-            preview.command,
-            "$ APP_NAME='My App' APP_BUNDLE_ID='com.example.my-app' ./scripts/build_macos_app.sh"
-        );
+    fn validates_export_file_names() {
+        assert!(validate_file_name("tiger-mountain.gpx").is_ok());
+        assert!(validate_file_name("../route.gpx").is_err());
+        assert!(validate_file_name("route.xml").is_err());
     }
 }

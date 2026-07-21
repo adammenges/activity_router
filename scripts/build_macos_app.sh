@@ -5,24 +5,33 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 export LC_ALL=C
 
+RUST_TOOLCHAIN_VERSION="1.95.0"
+
 if [[ "${OSTYPE:-}" != darwin* ]]; then
   echo "error: macOS app bundles must be built on macOS." >&2
   exit 1
 fi
 
-for command in cargo codesign xcode-select; do
+for command in cargo codesign rustup xcode-select; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "error: $command is required." >&2
     exit 1
   fi
 done
 
+PINNED_RUSTC="$(rustup which --toolchain "$RUST_TOOLCHAIN_VERSION" rustc)"
+PINNED_RUST_TOOLCHAIN_BIN="$(dirname -- "$PINNED_RUSTC")"
+
+with_pinned_rust() {
+  PATH="$PINNED_RUST_TOOLCHAIN_BIN:$PATH" "$@"
+}
+
 if ! xcode-select -p >/dev/null 2>&1; then
   echo "error: Xcode Command Line Tools are required. Run: xcode-select --install" >&2
   exit 1
 fi
 
-if ! cargo tauri --version >/dev/null 2>&1; then
+if ! with_pinned_rust cargo tauri --version >/dev/null 2>&1; then
   echo "error: Tauri CLI is required. Run: ./scripts/setup.sh" >&2
   exit 1
 fi
@@ -103,7 +112,7 @@ fi
 
 if [[ "$FORCE_ICONS" == "1" || ! -f src-tauri/icons/icon.icns || "$ICON_SOURCE" -nt src-tauri/icons/icon.icns ]]; then
   echo "Generating platform icons from $ICON_SOURCE..."
-  cargo tauri icon "$ICON_SOURCE"
+  with_pinned_rust cargo tauri icon "$ICON_SOURCE"
 fi
 
 TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rust-tauri-build.XXXXXX")"
@@ -126,7 +135,7 @@ else
 fi
 
 echo "Building $APP_NAME ($APP_BUNDLE_ID) v$APP_VERSION..."
-cargo tauri "${build_args[@]}" -- --locked
+with_pinned_rust cargo tauri "${build_args[@]}" -- --locked
 
 APP_BUNDLE="$BUNDLE_DIR/$APP_NAME.app"
 if [[ ! -d "$APP_BUNDLE" ]]; then
